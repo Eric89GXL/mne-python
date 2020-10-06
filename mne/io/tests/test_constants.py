@@ -19,7 +19,8 @@ from mne.utils import _fetch_file, requires_good_network
 
 
 # https://github.com/mne-tools/fiff-constants/commits/master
-commit = '198d943d0ff92ecdfb947b84af6289a0e79ad060'
+REPO = 'larsoner'  # XXX restore 'mne-tools'
+COMMIT = '5b593528711cbade33a0b531ef8cec58a524ea95'
 
 # These are oddities that we won't address:
 iod_dups = (355, 359)  # these are in both MEGIN and MNE files
@@ -81,8 +82,8 @@ def test_constants(tmpdir):
     """Test compensation."""
     tmpdir = str(tmpdir)  # old pytest...
     dest = op.join(tmpdir, 'fiff.zip')
-    _fetch_file('https://codeload.github.com/mne-tools/fiff-constants/zip/' +
-                commit, dest)
+    _fetch_file('https://codeload.github.com/'
+                f'{REPO}/fiff-constants/zip/{COMMIT}', dest)
     names = list()
     with zipfile.ZipFile(dest, 'r') as ff:
         for name in ff.namelist():

@@ -39,6 +39,8 @@ Enhancements
 
 - Add reader for optical imaging data recorded using ISS Imgagent I/II hardware and BOXY recording software in :func:`mne.io.read_raw_boxy` (:gh:`7717` **by new contributor** |Jonathan Kuziek|_ and `Kyle Mathewson`_)
 
+- Remove the 15-character limitation for channel names when writing to FIF format. If you need the old 15-character names, you can use something like ``raw.rename_channels({n: n[:13] for n in raw.ch_names}, allow_duplicates=True)``, by `Eric Larson`_ (:gh:`8346`)
+
 - Add options to use labels in :func:`mne.minimum_norm.get_point_spread` and :func:`mne.minimum_norm.get_cross_talk` (:gh:`8275` by `Olaf Hauk`_)
 
 - Update ``surfaces`` argument in :func:`mne.viz.plot_alignment` to allow dict for transparency values, and set default for sEEG data to have transparency (:gh:`8445` by `Keith Doelling`_)

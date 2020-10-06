@@ -24,14 +24,16 @@ from mne import (read_cov, read_forward_solution, read_evokeds, pick_types,
                  pick_types_forward, make_forward_solution, EvokedArray,
                  convert_forward_solution, Covariance, combine_evoked,
                  SourceEstimate, make_sphere_model, make_ad_hoc_cov,
-                 pick_channels_forward, compute_raw_covariance)
+                 pick_channels_forward, compute_raw_covariance,
+                 setup_volume_source_space, compute_covariance,
+                 write_cov, write_forward_solution)
 from mne.io import read_raw_fif
 from mne.minimum_norm import (apply_inverse, read_inverse_operator,
                               apply_inverse_raw, apply_inverse_epochs,
                               make_inverse_operator, apply_inverse_cov,
                               write_inverse_operator, prepare_inverse_operator,
                               compute_rank_inverse, INVERSE_METHODS)
-from mne.utils import _TempDir, run_tests_if_main, catch_logging
+from mne.utils import _TempDir, catch_logging
 
 test_path = testing.data_path(download=False)
 s_path = op.join(test_path, 'MEG', 'sample')
@@ -1244,4 +1246,50 @@ def test_sss_rank():
     assert rank == 67
 
 
-run_tests_if_main()
+@testing.requires_testing_data
+def test_long_names(tmpdir):
+    """Test long-name support for fwd/cov/inv."""
+    raw = read_raw_fif(fname_raw).crop(0, 1.1)
+    raw.del_proj()
+    raw.pick_channels(raw.ch_names[:10])
+    raw.rename_channels({name: name + 'x' * 20 for name in raw.ch_names})
+    epochs = Epochs(raw, [[raw.first_samp, 0, 1]], tmin=0, preload=True,
+                    baseline=None)
+    assert len(epochs) == 1
+    cov = compute_covariance(epochs, verbose='error')
+    evoked = epochs.average()
+    del epochs
+    assert evoked.ch_names == cov['names'] == raw.ch_names
+    sphere = make_sphere_model()
+    rng = np.random.RandomState(0)
+    rr = (rng.rand(10, 3) - 0.5) / 10.  # -0.05 -> 0.05
+    nn = rng.randn(10, 3)
+    nn /= np.linalg.norm(nn, axis=1, keepdims=True)
+    src = setup_volume_source_space(pos=dict(rr=rr, nn=nn))
+    fwd = make_forward_solution(evoked.info, None, src, sphere)
+    assert fwd['sol']['row_names'] == evoked.ch_names
+    inv = make_inverse_operator(evoked.info, fwd, cov)
+    assert inv['info']['ch_names'] == evoked.ch_names
+    stc = apply_inverse(evoked, inv)
+    assert_allclose(stc.times, evoked.times)
+    # now with I/O
+    fname = tmpdir.join('temp-cov.fif')
+    write_cov(fname, cov)
+    cov_read = read_cov(fname)
+    assert cov_read['names'] == evoked.ch_names
+    fname = tmpdir.join('temp-ave.fif')
+    evoked.save(fname)
+    evoked_read = read_evokeds(fname)[0]
+    assert evoked_read.ch_names == evoked.ch_names
+    fname = tmpdir.join('temp-fwd.fif')
+    write_forward_solution(fname, fwd)
+    fwd_read = read_forward_solution(fname)
+    assert fwd['sol']['row_names'] == fwd_read['sol']['row_names']
+    inv_2 = make_inverse_operator(evoked_read.info, fwd_read, cov_read)
+    stc_2 = apply_inverse(evoked_read, inv_2)
+    assert_allclose(stc_2.data, stc.data, atol=1e-5)
+    fname = tmpdir.join('temp-inv.fif')
+    write_inverse_operator(fname, inv_2)
+    inv_3 = read_inverse_operator(fname)
+    stc_3 = apply_inverse(evoked, inv_3)
+    assert_allclose(stc_3.data, stc.data, atol=1e-5)
