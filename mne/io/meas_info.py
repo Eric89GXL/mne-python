@@ -911,22 +911,24 @@ def read_info(fname, verbose=None):
     return info
 
 
-def read_bad_channels(fid, node):
+def read_bad_channels(fid, node, *, rename=None):
     """Read bad channels.
 
     Parameters
     ----------
     fid : file
         The file descriptor.
-
     node : dict
         The node of the FIF tree that contains info on the bad channels.
+    rename : dict | None
+        Short-to-long name mapping.
 
     Returns
     -------
     bads : list
         A list of bad channel's names.
     """
+    rename = {} if rename is None else rename
     nodes = dir_tree_find(node, FIFF.FIFFB_MNE_BAD_CHANNELS)
 
     bads = []
@@ -935,6 +937,7 @@ def read_bad_channels(fid, node):
             tag = find_tag(fid, node, FIFF.FIFF_MNE_CH_NAME_LIST)
             if tag is not None and tag.data is not None:
                 bads = tag.data.split(':')
+    _rename_list(bads, rename)
     return bads
 
 
@@ -1068,7 +1071,7 @@ def read_meas_info(fid, tree, clean_bads=False, verbose=None):
         elif kind == FIFF.FIFF_MNE_KIT_SYSTEM_ID:
             tag = read_tag(fid, pos)
             kit_system_id = int(tag.data)
-    _update_ch_info(chs, meas_info, fid)
+    rename = _read_extended_ch_info(chs, meas_info, fid)
 
     # Check that we have everything we need
     if nchan is None:
@@ -1125,10 +1128,10 @@ def read_meas_info(fid, tree, clean_bads=False, verbose=None):
     projs = _read_proj(fid, meas_info)
 
     #   Load the CTF compensation data
-    comps = read_ctf_comp(fid, meas_info, chs)
+    comps = read_ctf_comp(fid, meas_info, chs, rename=rename)
 
     #   Load the bad channel list
-    bads = read_bad_channels(fid, meas_info)
+    bads = read_bad_channels(fid, meas_info, rename=rename)
 
     #
     #   Put the data together
@@ -1418,13 +1421,16 @@ def read_meas_info(fid, tree, clean_bads=False, verbose=None):
     return info, meas
 
 
-def _update_ch_info(chs, parent, fid):
+def _read_extended_ch_info(chs, parent, fid):
     ch_infos = dir_tree_find(parent, FIFF.FIFFB_CH_INFO)
     if len(ch_infos) == 0:
         return
     _check_option('length of channel infos', len(ch_infos), [len(chs)])
+    logger.info('    Reading extended channel information')
+
     # Here we assume that ``remap`` is in the same order as the channels
     # themselves, which is hopefully safe enough.
+    rename = dict()
     for new, ch in zip(ch_infos, chs):
         for k in range(new['nent']):
             kind = new['directory'][k].kind
@@ -1438,9 +1444,27 @@ def _update_ch_info(chs, parent, fid):
             assert key in ch
             data = read_tag(fid, new['directory'][k].pos).data
             if data is not None:
-                ch[key] = cast(data)
+                data = cast(data)
+                if key == 'ch_name':
+                    rename[ch[key]] = data
+                ch[key] = data
         _update_ch_info_named(ch)
-    return chs
+    # we need to return the "rename" map so that we can also rename the
+    # bad channels
+    return rename
+
+
+def _rename_list(bads, rename_map):
+    bads[:] = [rename_map.get(bad, bad) for bad in bads]
+    return bads
+
+
+def _rename_comps(comps, rename_map):
+    if not (comps and rename_map):
+        return
+    for comp in comps:
+        for key in ('row_names', 'col_names'):
+            _rename_list(comp['data'][key], rename_map)
 
 
 def _ensure_meas_date_none_or_dt(meas_date):
@@ -1612,9 +1636,11 @@ def write_meas_info(fid, info, data_type=None, reset_range=True):
     _write_proj(fid, info['projs'])
 
     #   Bad channels
+    rename_map = _make_rename_map(info['chs'])
     if len(info['bads']) > 0:
+        bads = _rename_list(info['bads'].copy(), rename_map)
         start_block(fid, FIFF.FIFFB_MNE_BAD_CHANNELS)
-        write_name_list(fid, FIFF.FIFF_MNE_CH_NAME_LIST, info['bads'])
+        write_name_list(fid, FIFF.FIFF_MNE_CH_NAME_LIST, bads)
         end_block(fid, FIFF.FIFFB_MNE_BAD_CHANNELS)
 
     #   General
@@ -1648,7 +1674,7 @@ def write_meas_info(fid, info, data_type=None, reset_range=True):
         write_string(fid, FIFF.FIFF_XPLOTTER_LAYOUT, info['xplotter_layout'])
 
     #  Channel information
-    _write_ch_infos(fid, info['chs'], reset_range)
+    _write_ch_infos(fid, info['chs'], reset_range, rename_map)
 
     # Subject information
     if info.get('subject_info') is not None:
@@ -1719,7 +1745,11 @@ def write_meas_info(fid, info, data_type=None, reset_range=True):
         del hs
 
     #   CTF compensation info
-    write_ctf_comp(fid, info['comps'])
+    comps = info['comps']
+    if rename_map:
+        comps = deepcopy(comps)
+        _rename_comps(comps, {v: k for k, v in rename_map.items()})
+    write_ctf_comp(fid, comps)
 
     #   KIT system ID
     if info.get('kit_system_id') is not None:
@@ -2358,28 +2388,34 @@ def _dict_unpack(obj, casts):
             for ii in range(n)]
 
 
-def _write_ch_infos(fid, chs, reset_range=False):
+def _make_rename_map(chs):
     orig_ch_names = [c['ch_name'] for c in chs]
     ch_names = orig_ch_names.copy()
     _unique_channel_names(ch_names, max_length=15, verbose='error')
-    legacy_chs = chs.copy()
-    for k, (c, name) in enumerate(zip(chs, ch_names)):
+    rename_map = dict()
+    if orig_ch_names != ch_names:
+        rename_map.update(zip(orig_ch_names, ch_names))
+    return rename_map
+
+
+def _write_ch_infos(fid, chs, reset_range, rename_map):
+    rename_map = dict() if rename_map is None else rename_map
+    for k, c in enumerate(chs):
         #   Scan numbers may have been messed up
-        legacy_chs[k] = c = c.copy()
+        c = c.copy()
+        c['ch_name'] = rename_map.get(c['ch_name'], c['ch_name'])
+        assert len(c['ch_name']) <= 15
         c['scanno'] = k + 1
         # for float/double, the "range" param is unnecessary
-        if reset_range is True:
+        if reset_range:
             c['range'] = 1.0
-        c['ch_name'] = name
-    for c in legacy_chs:
         write_ch_info(fid, c)
     # only write new-style channel information if necessary
-    if orig_ch_names != ch_names:
+    if len(rename_map):
         logger.info(
             '    Writing channel names to FIF truncated to 15 characters '
             'with remapping')
-        for ch, orig in zip(chs, orig_ch_names):
-            ch['ch_name'] = orig
+        for ch in chs:
             start_block(fid, FIFF.FIFFB_CH_INFO)
             assert set(ch) == set(_CH_INFO_MAP)
             for (key, (const, _, write)) in _CH_INFO_MAP.items():

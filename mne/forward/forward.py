@@ -27,7 +27,8 @@ from ..io.tag import find_tag, read_tag
 from ..io.matrix import (_read_named_matrix, _transpose_named_matrix,
                          write_named_matrix)
 from ..io.meas_info import (read_bad_channels, write_info, _write_ch_infos,
-                            _update_ch_info)
+                            _read_extended_ch_info, _make_rename_map,
+                            _rename_list)
 from ..io.pick import (pick_channels_forward, pick_info, pick_channels,
                        pick_types)
 from ..io.write import (write_int, start_block, end_block,
@@ -294,7 +295,7 @@ def _read_forward_meas_info(tree, fid):
         if kind == FIFF.FIFF_CH_INFO:
             tag = read_tag(fid, pos)
             chs.append(tag.data)
-    _update_ch_info(chs, parent_meg, fid)
+    rename_map = _read_extended_ch_info(chs, parent_meg, fid)
     info._update_redundant()
 
     #   Get the MRI <-> head coordinate transformation
@@ -323,7 +324,7 @@ def _read_forward_meas_info(tree, fid):
     else:
         raise ValueError('MEG/head coordinate transformation not found')
 
-    info['bads'] = read_bad_channels(fid, parent_meg)
+    info['bads'] = read_bad_channels(fid, parent_meg, rename=rename_map)
     # clean up our bad list, old versions could have non-existent bads
     info['bads'] = [bad for bad in info['bads'] if bad in info['ch_names']]
 
@@ -918,14 +919,17 @@ def write_forward_meas_info(fid, info):
         raise ValueError('Head<-->sensor transform not found')
     write_coord_trans(fid, meg_head_t)
 
+    rename_map = dict()
     if 'chs' in info:
         #  Channel information
+        rename_map = _make_rename_map(info['chs'])
         write_int(fid, FIFF.FIFF_NCHAN, len(info['chs']))
-        _write_ch_infos(fid, info['chs'])
+        _write_ch_infos(fid, info['chs'], False, rename_map)
     if 'bads' in info and len(info['bads']) > 0:
         #   Bad channels
+        bads = _rename_list(info['bads'].copy(), rename_map)
         start_block(fid, FIFF.FIFFB_MNE_BAD_CHANNELS)
-        write_name_list(fid, FIFF.FIFF_MNE_CH_NAME_LIST, info['bads'])
+        write_name_list(fid, FIFF.FIFF_MNE_CH_NAME_LIST, bads)
         end_block(fid, FIFF.FIFFB_MNE_BAD_CHANNELS)
 
     end_block(fid, FIFF.FIFFB_MNE_PARENT_MEAS_FILE)

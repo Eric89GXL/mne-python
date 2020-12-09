@@ -32,7 +32,8 @@ from .io.open import fiff_open
 from .io.tag import read_tag
 from .io.tree import dir_tree_find
 from .io.pick import pick_types, _picks_to_idx, _FNIRS_CH_TYPES_SPLIT
-from .io.meas_info import read_meas_info, write_meas_info, _update_ch_info
+from .io.meas_info import (read_meas_info, write_meas_info,
+                           _read_extended_ch_info, _rename_list)
 from .io.proj import ProjMixin
 from .io.write import (start_file, start_block, end_file, end_block,
                        write_int, write_string, write_float_matrix,
@@ -1073,8 +1074,9 @@ def _read_evoked(fname, condition=None, kind='average', allow_maxshield=False):
                 raise ValueError('Number of channels and number of '
                                  'channel definitions are different')
 
-            _update_ch_info(chs, my_evoked, fid)
+            rename_map = _read_extended_ch_info(chs, my_evoked, fid)
             info['chs'] = chs
+            _rename_list(info['bads'], rename_map)
             logger.info('    Found channel information in evoked data. '
                         'nchan = %d' % nchan)
             if sfreq > 0:

@@ -773,25 +773,55 @@ def test_invalid_subject_birthday():
     assert 'birthday' not in raw.info['subject_info']
 
 
-def test_channel_name_limit(tmpdir):
+@pytest.mark.parametrize('fname', [
+    pytest.param(ctf_fname, marks=testing._pytest_mark()),
+    raw_fname
+])
+def test_channel_name_limit(tmpdir, fname):
     """Test that our remapping works properly."""
     # raw
-    raw = read_raw_fif(raw_fname).crop(0, 2)
-    raw.pick_channels(raw.ch_names[:2])
+    if fname.endswith('fif'):
+        raw = read_raw_fif(fname)
+        raw.pick_channels(raw.ch_names[:3])
+        ref_names = []
+        data_names = raw.ch_names
+    else:
+        assert fname.endswith('.ds')
+        raw = read_raw_ctf(fname)
+        ref_names = [raw.ch_names[pick]
+                     for pick in pick_types(raw.info, meg=False, ref_meg=True)]
+        data_names = raw.ch_names[32:35]
+    raw.pick_channels(data_names + ref_names).crop(0, 2)
     long_names = ['123456789abcdefg' + name for name in raw.ch_names]
     fname = tmpdir.join('test-raw.fif')
     with catch_logging() as log:
         raw.save(fname)
     log = log.getvalue()
     assert 'truncated' not in log
-    raw.rename_channels(dict(zip(raw.ch_names, long_names)))
+    rename = dict(zip(raw.ch_names, long_names))
+    long_data_names = [rename[name] for name in data_names]
+    raw.rename_channels(rename)
+    for comp in raw.info['comps']:
+        for key in ('row_names', 'col_names'):
+            for name in comp['data'][key]:
+                assert name in raw.ch_names
+    if raw.info['comps']:
+        assert raw.compensation_grade == 0
+        raw.apply_gradient_compensation(3)
+        assert raw.compensation_grade == 3
+    raw.info['bads'] = bads = long_data_names[2:3]
+    good_long_data_names = [
+        name for name in long_data_names if name not in bads]
     with catch_logging() as log:
         raw.save(fname, overwrite=True, verbose=True)
     log = log.getvalue()
     assert 'truncated to 15' in log
     for name in raw.ch_names:
         assert len(name) > 15
-    raw_read = read_raw_fif(fname)
+    with catch_logging() as log:
+        raw_read = read_raw_fif(fname, verbose=True)
+    log = log.getvalue()
+    assert 'Reading extended channel information' in log
     for ra in (raw, raw_read):
         assert ra.ch_names == long_names
     del raw_read
@@ -803,26 +833,31 @@ def test_channel_name_limit(tmpdir):
     for ep in (epochs, epochs_read):
         assert ep.info['ch_names'] == long_names
         assert ep.ch_names == long_names
-    del epochs_read, raw
+    del raw, epochs_read
     # cov
+    epochs.info['bads'] = []
     cov = compute_covariance(epochs, verbose='error')
     fname = tmpdir.join('test-cov.fif')
     write_cov(fname, cov)
     cov_read = read_cov(fname)
     for co in (cov, cov_read):
-        assert co['names'] == long_names
+        assert co['names'] == long_data_names
+        assert co['bads'] == []
     del cov_read
     # evoked
     evoked = epochs.average()
+    evoked.info['bads'] = bads
     assert evoked.nave == 1
     fname = tmpdir.join('test-ave.fif')
     evoked.save(fname)
     evoked_read = read_evokeds(fname)[0]
     for ev in (evoked, evoked_read):
         assert ev.ch_names == long_names
+        assert ev.info['bads'] == bads
     del evoked_read, epochs
     # forward
-    sphere = make_sphere_model('auto', 'auto', evoked.info)
+    with pytest.warns(None):  # not enough points for CTF
+        sphere = make_sphere_model('auto', 'auto', evoked.info)
     src = setup_volume_source_space(
         pos=dict(rr=[[0, 0, 0.04]], nn=[[0, 1., 0.]]))
     fwd = make_forward_solution(evoked.info, None, src, sphere)
@@ -830,8 +865,9 @@ def test_channel_name_limit(tmpdir):
     write_forward_solution(fname, fwd)
     fwd_read = read_forward_solution(fname)
     for fw in (fwd, fwd_read):
-        assert fw['sol']['row_names'] == long_names
-        assert fw['info']['ch_names'] == long_names
+        assert fw['sol']['row_names'] == long_data_names
+        assert fw['info']['ch_names'] == long_data_names
+        assert fw['info']['bads'] == bads
     del fwd_read
     # inv
     inv = make_inverse_operator(evoked.info, fwd, cov)
@@ -839,5 +875,5 @@ def test_channel_name_limit(tmpdir):
     write_inverse_operator(fname, inv)
     inv_read = read_inverse_operator(fname)
     for iv in (inv, inv_read):
-        assert iv['info']['ch_names'] == long_names
+        assert iv['info']['ch_names'] == good_long_data_names
     apply_inverse(evoked, inv)  # smoke test

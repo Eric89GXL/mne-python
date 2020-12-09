@@ -23,7 +23,8 @@ from ..utils import (verbose, logger, warn,
                      _check_preload, _validate_type, fill_doc, _check_option)
 from ..io.compensator import get_current_comp
 from ..io.constants import FIFF
-from ..io.meas_info import anonymize_info, Info, MontageMixin, create_info
+from ..io.meas_info import (anonymize_info, Info, MontageMixin, create_info,
+                            _rename_comps)
 from ..io.pick import (channel_type, pick_info, pick_types, _picks_by_type,
                        _check_excludes_includes, _contains_ch_type,
                        channel_indices_by_type, pick_channels, _picks_to_idx,
@@ -1178,8 +1179,11 @@ def rename_channels(info, mapping, allow_duplicates=False, verbose=None):
 
     # do the remapping in info
     info['bads'] = bads
+    rename = dict()
     for ch, ch_name in zip(info['chs'], ch_names):
+        rename[ch['ch_name']] = ch_name
         ch['ch_name'] = ch_name
+    _rename_comps(info.get('comps', []), rename)  # .get b/c fwd info omits it
     info._update_redundant()
     info._check_consistency()
 
