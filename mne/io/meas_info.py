@@ -1748,7 +1748,7 @@ def write_meas_info(fid, info, data_type=None, reset_range=True):
     comps = info['comps']
     if rename_map:
         comps = deepcopy(comps)
-        _rename_comps(comps, {v: k for k, v in rename_map.items()})
+        _rename_comps(comps, rename_map)
     write_ctf_comp(fid, comps)
 
     #   KIT system ID

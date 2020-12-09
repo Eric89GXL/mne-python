@@ -22,14 +22,15 @@ from mne.channels import read_polhemus_fastscan
 from mne.event import make_fixed_length_events
 from mne.datasets import testing
 from mne.io import (read_fiducials, write_fiducials, _coil_trans_to_loc,
-                    _loc_to_coil_trans, read_raw_fif, read_info, write_info)
+                    _loc_to_coil_trans, read_raw_fif, read_info, write_info,
+                    meas_info)
 from mne.io.constants import FIFF
 from mne.io.write import _generate_meas_id, DATE_NONE
 from mne.io.meas_info import (Info, create_info, _merge_info,
                               _force_update_info, RAW_INFO_FIELDS,
                               _bad_chans_comp, _get_valid_units,
                               anonymize_info, _stamp_to_dt, _dt_to_stamp,
-                              _add_timedelta_to_stamp)
+                              _add_timedelta_to_stamp, _read_extended_ch_info)
 from mne.minimum_norm import (make_inverse_operator, write_inverse_operator,
                               read_inverse_operator, apply_inverse)
 from mne.io._digitization import _write_dig_points, _make_dig_points
@@ -777,9 +778,11 @@ def test_invalid_subject_birthday():
     pytest.param(ctf_fname, marks=testing._pytest_mark()),
     raw_fname
 ])
-def test_channel_name_limit(tmpdir, fname):
+def test_channel_name_limit(tmpdir, monkeypatch, fname):
     """Test that our remapping works properly."""
+    #
     # raw
+    #
     if fname.endswith('fif'):
         raw = read_raw_fif(fname)
         raw.pick_channels(raw.ch_names[:3])
@@ -818,6 +821,7 @@ def test_channel_name_limit(tmpdir, fname):
     assert 'truncated to 15' in log
     for name in raw.ch_names:
         assert len(name) > 15
+    # first read the full way
     with catch_logging() as log:
         raw_read = read_raw_fif(fname, verbose=True)
     log = log.getvalue()
@@ -825,7 +829,22 @@ def test_channel_name_limit(tmpdir, fname):
     for ra in (raw, raw_read):
         assert ra.ch_names == long_names
     del raw_read
+    # next read as if no longer names could be read
+    monkeypatch.setattr(
+        meas_info, '_read_extended_ch_info', lambda x, y, z: None)
+    with catch_logging() as log:
+        raw_read = read_raw_fif(fname, verbose=True)
+    log = log.getvalue()
+    assert 'extended' not in log
+    if raw.info['comps']:
+        assert raw_read.compensation_grade == 3
+        raw_read.apply_gradient_compensation(0)
+        assert raw_read.compensation_grade == 0
+    monkeypatch.setattr(  # restore
+        meas_info, '_read_extended_ch_info', _read_extended_ch_info)
+    #
     # epochs
+    #
     epochs = Epochs(raw, make_fixed_length_events(raw))
     fname = tmpdir.join('test-epo.fif')
     epochs.save(fname)
@@ -844,7 +863,10 @@ def test_channel_name_limit(tmpdir, fname):
         assert co['names'] == long_data_names
         assert co['bads'] == []
     del cov_read
+
+    #
     # evoked
+    #
     evoked = epochs.average()
     evoked.info['bads'] = bads
     assert evoked.nave == 1
@@ -855,7 +877,10 @@ def test_channel_name_limit(tmpdir, fname):
         assert ev.ch_names == long_names
         assert ev.info['bads'] == bads
     del evoked_read, epochs
+
+    #
     # forward
+    #
     with pytest.warns(None):  # not enough points for CTF
         sphere = make_sphere_model('auto', 'auto', evoked.info)
     src = setup_volume_source_space(
@@ -869,7 +894,10 @@ def test_channel_name_limit(tmpdir, fname):
         assert fw['info']['ch_names'] == long_data_names
         assert fw['info']['bads'] == bads
     del fwd_read
+
+    #
     # inv
+    #
     inv = make_inverse_operator(evoked.info, fwd, cov)
     fname = tmpdir.join('test-inv.fif')
     write_inverse_operator(fname, inv)
