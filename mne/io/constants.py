@@ -171,8 +171,8 @@ FIFF.FIFF_CH_LOC                 = 255   # Channel loc
 FIFF.FIFF_CH_UNIT                = 256   # Unit of the data
 FIFF.FIFF_CH_UNIT_MUL            = 257   # Unit multiplier exponent
 FIFF.FIFF_CH_DACQ_NAME           = 258   # Name of the channel in the data acquisition system. Corresponds to fiffChInfoRec.name.
-FIFF.FIFF_CH_COIL_TYPE           = 259   # Coil type in coil_def.dat
-FIFF.FIFF_CH_COORD_FRAME         = 4101  # Coordinate frame (integer)
+FIFF.FIFF_CH_COIL_TYPE           = 350   # Coil type in coil_def.dat
+FIFF.FIFF_CH_COORD_FRAME         = 351  # Coordinate frame (integer)
 
 #
 # Pointers

@@ -19,12 +19,12 @@ from mne.utils import _fetch_file, requires_good_network
 
 
 # https://github.com/mne-tools/fiff-constants/commits/master
-REPO = 'larsoner'  # XXX restore 'mne-tools'
-COMMIT = '5b593528711cbade33a0b531ef8cec58a524ea95'
+REPO = 'mne-tools'
+COMMIT = 'dca2d1e4daa27684facd581bcf88a0907b3418b8'
 
 # These are oddities that we won't address:
 iod_dups = (355, 359)  # these are in both MEGIN and MNE files
-tag_dups = (3501, 3507)  # in both MEGIN and MNE files
+tag_dups = (3501,)  # in both MEGIN and MNE files
 
 _dir_ignore_names = ('clear', 'copy', 'fromkeys', 'get', 'items', 'keys',
                      'pop', 'popitem', 'setdefault', 'update', 'values',
